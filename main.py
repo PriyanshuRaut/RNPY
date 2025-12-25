@@ -1,7 +1,7 @@
 import numpy as np
 import npguard as ng
 
-with ng.memory_watcher("matrix_pipeline", warn_threshold_mb=1):
+with ng.memory_watcher("matrix_pipeline"):
     a = np.random.rand(10_000, 100)
     ng.register_array(a, "a")
 

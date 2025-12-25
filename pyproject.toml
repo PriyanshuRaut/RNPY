@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "npguard"
+version = "0.1.0"
+description = "NumPy memory observability and explanation tool"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+
+authors = [
+  { name = "Priyanshu Rauth" }
+]
+
+keywords = [
+  "numpy",
+  "memory",
+  "profiling",
+  "performance",
+  "scientific-computing"
+]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Debuggers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only"
+]
+
+dependencies = [
+  "numpy"
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/npguard"
+Issues = "https://github.com/yourusername/npguard/issues"
