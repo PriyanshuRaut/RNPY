@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "npguard"
-version = "0.1.0"
+version = "0.2.0"
 description = "NumPy memory observability and explanation tool"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -19,7 +19,10 @@ keywords = [
   "memory",
   "profiling",
   "performance",
-  "scientific-computing"
+  "scientific-computing",
+  "Priyanshu Rauth",
+  "npguard",
+  "memory management"
 ]
 
 classifiers = [
@@ -37,5 +40,5 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/npguard"
-Issues = "https://github.com/yourusername/npguard/issues"
+Homepage = "https://github.com/PriyanshuRaut/RNPY"
+Issues = "https://github.com/PriyanshuRaut/RNPY/issues"

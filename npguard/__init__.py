@@ -3,6 +3,12 @@ from .core import (
     register_array,
     report,
     suggest,
+    capture,
+    profile,
+    last_observation,
+    watch,
+    reset,
+
 )
 
 __all__ = [
@@ -10,4 +16,10 @@ __all__ = [
     "register_array",
     "report",
     "suggest",
+    "capture",
+    "profile",
+    "last_observation",
+    "watch",
+    "reset",
+
 ]
