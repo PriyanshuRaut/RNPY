@@ -6,7 +6,7 @@ It helps developers understand **why** NumPy memory usage spikes by detecting
 temporary allocations and explaining their causes, with safe, opt-in suggestions
 to reduce memory pressure.
 
-npguard focuses on *explanation*, not automatic optimization.
+npguard focuses on **explanation**, not automatic optimization.
 
 ---
 
@@ -22,8 +22,12 @@ PyPI: [https://pypi.org/project/npguard/](https://pypi.org/project/npguard/)
 
 ## Motivation
 
-NumPy can silently allocate large temporary arrays during chained expressions,
-broadcasting, or forced copies.
+NumPy can silently allocate large temporary arrays during:
+
+* chained expressions
+* broadcasting
+* repeated allocations inside loops
+* parallel execution
 
 For example:
 
@@ -35,9 +39,9 @@ This single line can create multiple full-sized temporary arrays, leading to
 sudden memory spikes that are not obvious from the code and are often poorly
 explained by traditional profilers.
 
-npguard exists to answer the question:
+**npguard exists to answer one question:**
 
-**“Why did memory spike here?”**
+> *“Why did memory spike here?”*
 
 ---
 
@@ -45,26 +49,30 @@ npguard exists to answer the question:
 
 * Watch NumPy-heavy code blocks
 * Detect memory pressure and hidden temporary allocations
-* Estimate temporary memory usage and temporary array counts
-* Explain likely causes (chained ops, broadcasting, repeated allocations)
+* Estimate temporary memory usage and array counts
+* Detect repeated allocations
+* Detect parallel/threaded allocation spikes
+* Detect dtype promotion signals
+* Explain causes in human-readable terms
 * Provide safe, opt-in optimization suggestions
-* Multiple ergonomics:
 
-  * context manager
-  * decorator
-  * capture API
-  * programmatic access
+### Multiple ergonomics
+
+* Context manager
+* Decorator API
+* Silent capture API
+* Programmatic signal access
 
 ---
 
 ## What npguard does NOT do
 
-* Does not modify NumPy behavior
-* Does not monkey-patch NumPy
-* Does not automatically reuse buffers
-* Does not rewrite user code
-* Does not detect memory leaks
-* Is not a production monitoring tool
+* Does **not** modify NumPy behavior
+* Does **not** monkey-patch NumPy
+* Does **not** automatically reuse buffers
+* Does **not** rewrite user code
+* Does **not** detect memory leaks
+* Is **not** a production monitoring tool
 
 npguard is intended for **development and debugging**, not runtime enforcement.
 
@@ -72,14 +80,11 @@ npguard is intended for **development and debugging**, not runtime enforcement.
 
 ## Example Usage
 
+### 1. Basic block observation
+
 ```python
 import numpy as np
 import npguard as ng
-
-
-# -----------------------------------
-# 1. Basic block observation
-# -----------------------------------
 
 with ng.memory_watcher("basic_block"):
     a = np.random.rand(10_000, 100)
@@ -93,12 +98,27 @@ with ng.memory_watcher("basic_block"):
 
 ng.report()
 ng.suggest()
+```
 
+**Output:**
 
-# -----------------------------------
-# 2. Silent + capture API
-# -----------------------------------
+```
+[npguard] Memory spike detected
 
+[npguard] Allocation Summary (cumulative)
+  a           : 7.63 MB
+  b           : 7.63 MB
+  c           : 7.63 MB
+[INFO][npguard] Memory analysis completed (peak ~23.77 MB)
+[WARN][signals.repetition] Repeated allocations detected at 1 site(s)
+[INFO][suggestion] Reuse preallocated buffers inside loops
+```
+
+---
+
+## 2. Silent Capture API
+
+```python
 with ng.capture("captured_block") as obs:
     x = np.random.rand(10_000, 100)
     ng.register_array(x, "x")
@@ -106,64 +126,139 @@ with ng.capture("captured_block") as obs:
     y = x * 3
     ng.register_array(y, "y")
 
-print("\nCaptured observation:")
 print(obs)
+```
 
+**Output (excerpt):**
 
-# -----------------------------------
-# 3. Decorator API (@watch)
-# -----------------------------------
-
-@ng.watch("decorated_function", warn_threshold_mb=5)
-def compute_step():
-    a = np.random.rand(10_000, 100)
-    ng.register_array(a, "a")
-
-    return a * 2 + a.mean(axis=0)
-
-compute_step()
-ng.suggest()
-
-
-# -----------------------------------
-# 4. profile() helper
-# -----------------------------------
-
-def pipeline():
-    a = np.random.rand(10_000, 100)
-    ng.register_array(a, "a")
-
-    return np.ascontiguousarray(a.T)
-
-ng.profile(pipeline)
-ng.suggest()
-
-
-# -----------------------------------
-# 5. last_observation() + reset()
-# -----------------------------------
-
-print("\nLast observation dict:")
-print(ng.last_observation())
-
-ng.reset()
-print("\nAfter reset():")
-print(ng.last_observation())
+```
+{
+  'tag': 'captured_block',
+  'peak_mb': 15.26,
+  'signals': {
+    'parallel': None,
+    'dtype_promotions': [],
+    'repeated': {...},
+    'temporaries': {'count': 2, 'mb': 15.26}
+  }
+}
 ```
 
 ---
 
-## Example Output (abridged)
+## 3. Decorator API
+
+```python
+@ng.watch("decorated_function", warn_threshold_mb=5)
+def compute_step():
+    a = np.random.rand(10_000, 100)
+    ng.register_array(a, "a")
+    return a * 2 + a.mean(axis=0)
+
+compute_step()
+ng.suggest()
+```
+
+**Output:**
 
 ```
-[npguard] Memory Watch: basic_block
-  Python peak diff:    24.02 MB
-  NumPy live arrays:   0.00 MB
-  Estimated temporaries: 24.02 MB
-  Estimated temporary arrays: 3
+[npguard] Memory spike detected
+[INFO][npguard] Memory analysis completed (peak ~15.26 MB)
+[WARN][signals.repetition] Repeated allocations detected at 1 site(s)
+[INFO][suggestion] Reuse preallocated buffers inside loops
+```
 
-⚠️  Memory pressure detected
-  Likely temporary allocations caused by chained operations or broadcasting
+---
+
+## 4. profile() Helper
+
+```python
+def pipeline():
+    a = np.random.rand(10_000, 100)
+    ng.register_array(a, "a")
+    return np.ascontiguousarray(a.T)
+
+ng.profile(pipeline)
+ng.suggest()
+```
+
+---
+
+## 5. NEW in v0.3 — Structured Signal Access
+
+```python
+print("Peak MB:", ng.last("peak_mb"))
+print("Repeated allocations:", bool(ng.last("signals.repeated")))
+print("Dtype promotions:", bool(ng.last("signals.dtype_promotions")))
+print("Parallel allocations:", bool(ng.last("signals.parallel")))
+```
+
+**Output:**
+
+```
+Peak MB: 15.26
+Repeated allocations: True
+Dtype promotions: False
+Parallel allocations: False
+```
+
+---
+
+## 6. NEW in v0.3 — Parallel Allocation Detection
+
+```python
+import threading
+
+def threaded_alloc():
+    a = np.random.rand(5_000, 100)
+    ng.register_array(a, "threaded")
+
+with ng.memory_watcher("thread_test"):
+    t1 = threading.Thread(target=threaded_alloc)
+    t2 = threading.Thread(target=threaded_alloc)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+ng.suggest()
+```
+
+**Output:**
+
+```
+[WARN][signals.parallel] Parallel temporary allocations detected across threads
+[INFO][suggestion] Consider thread-local buffers or avoiding shared temporaries
+```
+
+---
+
+## 7. Reset State (v0.3 fix)
+
+```python
+print("Before reset:", ng.last())
+ng.reset()
+print("After reset:", ng.last())
+```
+
+**Output:**
+
+```
+Before reset: {...}
+After reset: {}
+```
+
+---
+
+
+## 8. Logging
+
+npguard exposes a lightweight logger for structured diagnostic output:
+
+```python
+ng.log.info("tag", "message")
+ng.log.warn("tag", "message")
+ng.log.debug("tag", "message")
 ```
 
 ---
@@ -182,29 +277,18 @@ print(ng.last_observation())
 
 * NumPy users working with medium to large arrays
 * Developers debugging memory pressure (not leaks)
-* Engineers who want explanations rather than automatic optimization
-
----
-
-## Comparison with Existing Tools
-
-* Traditional profilers show *how much* memory is used, not *why*
-* Leak detectors focus on long-lived leaks, not short-lived spikes
-* NumPy itself does not expose temporary allocation behavior at a high level
-
-npguard complements these tools by explaining **temporary allocation pressure**
-at the code-block or function level.
+* Engineers who want **explanations rather than auto-fixes**
 
 ---
 
 ## Project Status
 
-* Version: 0.2.0
-* Status: early but stable
-* API: intentionally small and conservative
+* **Version:** 0.3.0
+* **Status:** early but stable
+* **API:** conservative and explanation-first
 
-Future versions may improve explanation quality and aggregation,
-but will preserve the explanation-first philosophy.
+Future versions may improve signal accuracy and aggregation,
+while preserving the non-invasive philosophy.
 
 ---
 

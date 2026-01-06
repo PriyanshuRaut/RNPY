@@ -1,25 +1,28 @@
-from .core import (
+from .api import (
     memory_watcher,
     register_array,
-    report,
     suggest,
+    report,
+    watch,
     capture,
     profile,
     last_observation,
-    watch,
     reset,
+    last,
+    log,
 
 )
 
 __all__ = [
     "memory_watcher",
     "register_array",
-    "report",
     "suggest",
+    "report",
+    "watch",
     "capture",
     "profile",
     "last_observation",
-    "watch",
     "reset",
-
+    "last",
+    "log",
 ]
