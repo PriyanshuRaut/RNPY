@@ -295,3 +295,20 @@ while preserving the non-invasive philosophy.
 ## License
 
 MIT License
+
+---
+
+## Support & Sustainability
+
+**Npguard is developed and maintained as an open project.**
+
+If you find it useful and want to support its continued development, documentation, and experimentation, you can do so via Patreon.
+
+- Supporters may occasionally receive:
+- Early previews of new features or syntax
+- Development notes and design decisions
+- Sneak peeks into upcoming tools or related projects
+
+There are no fixed schedules or obligations. Support is primarily about enabling the work itself.
+
+Patreon: https://patreon.com/PriyanshuRauth
