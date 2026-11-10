@@ -1,4 +1,8 @@
-## v0.4.0.dev0 — Unreleased reliability foundation
+## v0.4.1 — Prism
+
+This release improves session isolation, tracing ownership, and the evidence
+behind memory diagnostics. It distinguishes process-traced memory from registered
+array sizes and reports unavailable measurements explicitly.
 
 ### Added
 - Independent nested/thread/async sessions and explicit worker session handles.
@@ -23,7 +27,14 @@
 - `peak_mb` and temporary count/size can be `None` when unmeasured/unattributable.
 - Reports use active/last-session logical sizes; reset during observation raises.
 - Worker registration requires explicit sharing. See `docs/migration-v0.4.md`.
-- This is development work; no package publication or stable release is implied.
+
+### Measurement limits
+- Process-traced memory is process-wide and can include unrelated work and
+  instrumentation. Individual session peaks require an exclusive tracing interval.
+- Registered sizes are logical `nbytes`; views and shared buffers can be counted
+  more than once. Object release does not establish that its buffer was freed.
+- NumPy data-buffer allocations, process RSS, and temporary-allocation lifetimes
+  are not measured separately in v0.4.1.
 
 ## v0.3.0 — Structured Signals & Ergonomics
 

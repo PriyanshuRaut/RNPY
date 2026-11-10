@@ -3,22 +3,22 @@
 NPGuard helps explain NumPy memory use through process-traced measurements and
 optional array metadata. It observes, analyzes, and suggests; it never rewrites
 code, monkey-patches NumPy, or changes array behavior. Application data stays
-local. This checkout is **v0.4.0.dev0**, a reliability development version, not a
-published stable release or a claim of production readiness.
+local. **Version 0.4.1 — Prism** adds reliable nested and concurrent observation
+sessions, explicit measurement scope, and evidence-based diagnostics. See the
+[changelog](CHANGELOG.md) for release details.
 
 ## Installation
 
 Python **3.10+**, NumPy **1.23.5–2.x** (subject to each NumPy release's Python
-support). From this checkout:
+support).
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-python -m pip install -e '.[dev]'
+python -m pip install "npguard==0.4.1"
 ```
 
-`pip install npguard` installs the version available on PyPI, which may differ
-from this development checkout. See the [compatibility matrix](docs/development.md).
+See the [compatibility matrix](docs/development.md). Users upgrading from v0.3
+should review the [migration guide](docs/migration-v0.4.md), including cases where
+memory measurements are now reported as `None` when they cannot be attributed.
 
 ## Observe a NumPy workload
 
@@ -121,7 +121,11 @@ is automatically attributed to a line of user code in v0.4.
 
 ## Development and roadmap
 
+From a source checkout, install the development dependencies in a virtual
+environment, then run the validation commands:
+
 ```bash
+python -m pip install -e ".[dev]"
 python -m pytest --cov=npguard --cov-report=term-missing
 python -m flake8 npguard tests benchmarks --select=E9,F63,F7,F82
 python main.py
