@@ -1,105 +1,52 @@
-"""
-npguard.api
-
-Public API façade for npguard.
-"""
+"""Public API; memory units use MiB (bytes / 1024**2)."""
 
 from contextlib import contextmanager
-from typing import Callable, Any, Dict
+from functools import wraps
+import inspect
+import sys
+from typing import Any, Callable, Dict, Optional
 
-# ---- Core execution ----
-from .core import memory_watcher as _memory_watcher
-from .core import last_observation as _last_observation
-
-# ---- Registry / state ----
+from . import core
+from .core import memory_watcher, last_observation, reset
 from .registry import register_array as _register_array
-from .registry import reset_registry as _reset_registry
-
-# ---- Explanation / reporting ----
-from .suggestions import suggest as _suggest
-from .reporting import report as _report
-from npguard import core
-
-# --- Custom Log ---
+from .reporting import report
+from .suggestions import suggest
 from .log import log
 
 
-# ==========================================================
-# Core v0.2 APIs (guaranteed stable)
-# ==========================================================
+__all__ = [
+    "memory_watcher", "register_array", "suggest", "report", "watch", "capture",
+    "profile", "last_observation", "reset", "last", "log",
+]
 
-def memory_watcher(tag: str = "block", **kwargs):
+
+def register_array(arr, label="array", *, source=None, session=None):
+    """Register ndarray metadata, returning arr unchanged.
+
+    source is an optional caller-asserted dtype provenance relationship. session
+    explicitly joins a handle yielded by memory_watcher, including from workers.
+    Re-registering a live object in a session is ignored (first metadata wins).
     """
-    Context manager to observe NumPy memory behavior.
-
-    Compatible with v0.2:
-    - tag
-    - warn_threshold_mb
-    - silent
-    """
-    return _memory_watcher(tag=tag, **kwargs)
+    frame = sys._getframe(1)
+    location = (frame.f_code.co_filename, frame.f_lineno)
+    del frame
+    return _register_array(arr, label, source=source, session=session, _location=location)
 
 
-def register_array(arr, label: str = "array"):
-    """
-    Register a NumPy array for observability.
-
-    This is explicit and opt-in by design.
-    """
-    return _register_array(arr, label)
-
-
-def suggest(*, temp_threshold_mb: float = 5):
-    """
-    Print explanation-first suggestions based on the last observation.
-    """
-    return _suggest(temp_threshold_mb=temp_threshold_mb)
-
-
-def report():
-    """
-    Print cumulative allocation summary.
-    """
-    return _report()
-
-
-# ==========================================================
-# State / Control APIs
-# ==========================================================
-
-def last_observation() -> Dict[str, Any]:
-    """
-    Return a read-only copy of the most recent observation.
-    """
-    obs = _last_observation()
-    return dict(obs) if obs else {}
-
-
-def reset():
-    """
-    Reset live observability state.
-
-    Does NOT clear cumulative allocation history unless documented.
-    """
-    core.reset()
-
-
-# ==========================================================
-# Ergonomic APIs (v0.2-compatible)
-# ==========================================================
-
-def watch(tag: str | None = None, **watcher_kwargs):
-    """
-    Decorator to observe a function as a single memory block.
-
-    Example:
-        @npguard.watch("step1", warn_threshold_mb=10)
-        def fn(): ...
-    """
+def watch(tag: Optional[str] = None, **watcher_kwargs):
+    """Observe a synchronous or async function, preserving its metadata/result."""
     def decorator(fn: Callable):
+        name = tag if tag is not None else getattr(fn, "__name__", type(fn).__name__)
+        if inspect.iscoroutinefunction(fn):
+            @wraps(fn)
+            async def async_wrapper(*args, **kwargs):
+                with memory_watcher(name, **watcher_kwargs):
+                    return await fn(*args, **kwargs)
+            return async_wrapper
+
+        @wraps(fn)
         def wrapper(*args, **kwargs):
-            name = tag or fn.__name__
-            with _memory_watcher(tag=name, **watcher_kwargs):
+            with memory_watcher(name, **watcher_kwargs):
                 return fn(*args, **kwargs)
         return wrapper
     return decorator
@@ -107,37 +54,31 @@ def watch(tag: str | None = None, **watcher_kwargs):
 
 @contextmanager
 def capture(tag: str = "block", **watcher_kwargs):
-    """
-    Silent context manager that captures observation data.
-
-    Example:
-        with npguard.capture("step") as obs:
-            ...
-        print(obs)
-    """
+    """Yield a dict populated on exit, including when the observed block raises."""
     box: Dict[str, Any] = {}
-    with _memory_watcher(tag=tag, silent=True, **watcher_kwargs):
-        yield box
-    box.update(last_observation())
+    watcher_kwargs.pop("silent", None)  # Capture is always silent.
+    session = None
+    try:
+        with memory_watcher(tag, silent=True, **watcher_kwargs) as session:
+            yield box
+    finally:
+        if session is not None:
+            box.update(session.observation)
 
 
 def profile(fn: Callable, *args, **kwargs):
-    """
-    Profile a callable using memory_watcher.
+    """Observe a callable and preserve its return value (await async results)."""
+    return watch()(fn)(*args, **kwargs)
 
-    Returns the callable's original return value.
-    """
-    with _memory_watcher(tag=fn.__name__):
-        return fn(*args, **kwargs)
 
 def last(key=None):
-    obs = last_observation()
+    """Read a defensive observation snapshot or a dotted dictionary path."""
+    observation = core.last_observation()
     if key is None:
-        return obs
-
-    cur = obs
+        return observation
+    current = observation
     for part in key.split("."):
-        if not isinstance(cur, dict):
+        if not isinstance(current, dict):
             return None
-        cur = cur.get(part)
-    return cur
+        current = current.get(part)
+    return current

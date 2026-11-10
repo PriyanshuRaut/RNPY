@@ -2,41 +2,63 @@ name: npguard CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
-    branches: ["main"]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
+        include:
+          - {os: ubuntu-latest, python: '3.10', numpy: 'numpy==1.23.5'}
+          - {os: ubuntu-latest, python: '3.11', numpy: 'numpy==1.26.4'}
+          - {os: ubuntu-latest, python: '3.12', numpy: 'numpy==1.26.4'}
+          - {os: ubuntu-latest, python: '3.12', numpy: 'numpy>=2,<3'}
+          - {os: ubuntu-latest, python: '3.13', numpy: 'numpy>=2,<3'}
+          - {os: ubuntu-latest, python: '3.14', numpy: 'numpy>=2,<3'}
+          - {os: windows-latest, python: '3.12', numpy: 'numpy>=2,<3'}
+          - {os: macos-latest, python: '3.12', numpy: 'numpy>=2,<3'}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
+          python-version: ${{ matrix.python }}
+      - name: Install project and selected NumPy
+        run: python -m pip install -e ".[dev]" "${{ matrix.numpy }}"
+      - name: Fatal-error lint
+        run: python -m flake8 npguard tests benchmarks --count --select=E9,F63,F7,F82 --show-source --statistics
+      - name: Unit and integration tests with branch coverage
+        run: python -m pytest --cov=npguard --cov-report=term-missing --cov-report=xml
+      - name: Demo and benchmark smoke run
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest flake8
-          pip install -e .
+          python main.py
+          python benchmarks/run.py --size 1000 --repeats 1 --output benchmark-smoke.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-${{ matrix.os }}-py${{ matrix.python }}-${{ strategy.job-index }}
+          path: |
+            coverage.xml
+            benchmark-smoke.json
 
-      - name: Lint (fatal errors only)
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install wheel outside checkout and run public API
         run: |
-          flake8 npguard \
-            --count \
-            --select=E9,F63,F7,F82 \
-            --show-source \
-            --statistics
-
-      - name: Run tests
-        run: |
-          pytest
+          python -m venv /tmp/npguard-wheel-check
+          /tmp/npguard-wheel-check/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/npguard-wheel-check/bin/python -c "import numpy as np, npguard as ng; exec('with ng.capture() as obs:\n    ng.register_array(np.ones(4))'); assert obs['measurements']['registered_arrays']['count'] == 1"

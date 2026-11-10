@@ -1,22 +1,22 @@
-# npguard/reporting.py
+"""Human-readable registered logical sizes; no allocation-size claims."""
 
-from .registry import ArrayRegistry
+from . import state
+from .registry import current_collection
+
 
 def report():
-    """
-    Print cumulative allocation summary.
-    """
-    if not ArrayRegistry:
-        print("\n[npguard] Allocation Summary (cumulative)")
+    """Summarize the active/last session, or standalone registrations initially."""
+    if state.sessions():
+        entries = current_collection().snapshot()
+    else:
+        observation = state.last_observation()
+        entries = observation["registrations"] if observation else current_collection().snapshot()
+    print("\n[npguard] Registered array sizes (logical; shared buffers may be counted twice)")
+    if not entries:
         print("  No arrays registered.")
         return
-
-    print("\n[npguard] Allocation Summary (cumulative)")
     totals = {}
-
-    for info in ArrayRegistry.values():
-        label = info["label"]
-        totals[label] = totals.get(label, 0) + info["size"]
-
+    for info in entries:
+        totals[info["label"]] = totals.get(info["label"], 0) + info["size"]
     for label, size in totals.items():
-        print(f"  {label:<12}: {size / 1024 / 1024:.2f} MB")
+        print(f"  {label:<12}: {size / 1024**2:.2f} MiB")

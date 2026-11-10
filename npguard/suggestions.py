@@ -1,80 +1,58 @@
+"""Conditional, evidence-based advice; never modify arrays or application code."""
+
+import math
+from numbers import Real
+
 from .core import last_observation
 from .log import log
 
 
 def suggest(temp_threshold_mb: float = 5):
-    """
-    Explanation-first suggestions based on the last observation.
-    - Noise-compressed via logging
-    """
-    obs = last_observation()
+    """Explain registered evidence; legacy threshold controls the traced summary.
 
-    if not obs:
+    High traced memory alone does not identify NumPy temporaries or their cause.
+    """
+    if (
+        not isinstance(temp_threshold_mb, Real)
+        or not math.isfinite(temp_threshold_mb)
+        or temp_threshold_mb < 0
+    ):
+        raise ValueError("temp_threshold_mb must be finite and non-negative")
+    observation = last_observation()
+    if not observation:
         log.info("npguard", "No observation data available.")
         return
-
-    peak_mb = obs.get("peak_mb", 0.0)
-    signals = obs.get("signals", {}) or {}
-
-    log.info("npguard", f"Memory analysis completed (peak ~{peak_mb:.2f} MB)")
-
-    if peak_mb < temp_threshold_mb:
-        log.debug(
-            "analysis",
-            "Peak memory below threshold; no significant temporary pressure detected"
-        )
-        return
-
-    # --------------------------------------------------
-    # Signal-based explanations (compressed)
-    # --------------------------------------------------
-
-    emitted = False
-
-    if signals.get("parallel"):
-        log.warn(
+    peak = observation["peak_mb"]
+    if peak is None:
+        log.info("npguard", "Session traced peak unavailable; see measurement scope and reason.")
+    elif peak >= temp_threshold_mb:
+        log.info("npguard", f"Process-wide traced peak increase: {peak:.2f} MiB (includes instrumentation)")
+    else:
+        log.debug("analysis", "Process-wide traced peak increase is below the summary threshold.")
+    for error in observation["analysis_errors"]:
+        log.warn("analysis", f"{error['detector']} analysis unavailable ({error['error_type']})")
+    signals = observation["signals"]
+    if signals["parallel"]:
+        log.info(
             "signals.parallel",
-            "Parallel temporary allocations detected across threads"
+            "Arrays were registered from multiple threads; concurrent allocation is unproven.",
         )
+    for finding in signals["dtype_promotions"]:
         log.info(
-            "suggestion",
-            "Consider thread-local buffers or avoiding shared temporaries"
-        )
-        emitted = True
-
-    if signals.get("dtype_promotions"):
-        log.warn(
             "signals.dtype",
-            "Dtype promotion caused full-size array copies"
+            f"Related arrays differ in dtype: {finding['from']} -> {finding['to']} "
+            f"at {finding['callsite']}",
         )
+        log.info("suggestion", "Review whether the result dtype is required; preserve numeric range and precision.")
+    if signals["repeated"]:
         log.info(
-            "suggestion",
-            "Make dtype conversions explicit to avoid hidden copies"
-        )
-        emitted = True
-
-    if signals.get("repeated"):
-        count = len(signals["repeated"])
-        log.warn(
             "signals.repetition",
-            f"Repeated allocations detected at {count} site(s)"
+            f"Distinct owning arrays registered at {len(signals['repeated'])} repeated site(s).",
         )
         log.info(
             "suggestion",
-            "Reuse preallocated buffers inside loops"
+            "If results need not coexist, consider preallocated buffers or out=; "
+            "check aliasing and correctness first.",
         )
-        emitted = True
-
-    # --------------------------------------------------
-    # Fallback heuristic (v0.2 behavior)
-    # --------------------------------------------------
-
-    if not emitted:
-        log.warn(
-            "signals.heuristic",
-            "Memory spike likely caused by chained NumPy expressions"
-        )
-        log.info(
-            "suggestion",
-            "Split expressions or use ufuncs with `out=`"
-        )
+    if not signals["dtype_promotions"] and not signals["repeated"] and not signals["parallel"]:
+        log.info("npguard", "No supported cause identified from registered evidence.")
