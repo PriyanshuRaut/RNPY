@@ -31,3 +31,19 @@ If you discover a security vulnerability, please report it responsibly.
 - If the issue is declined, an explanation will be provided
 
 Thank you for helping keep this project secure.
+
+## Development versions and diagnostic privacy
+
+The v0.4 development checkout is pre-release work, not a supported production
+release. NPGuard collects metadata locally and does not upload telemetry or
+array contents. Metadata can include local filenames, line numbers, labels,
+dtypes, shapes, thread IDs, object IDs, and sizes. Review and redact it before
+sharing reports or benchmark files. Avoid sensitive information in labels.
+Application exceptions are represented by their type name; their messages and
+tracebacks are not retained in observation results. Array values are not read
+for diagnosis, and arrays/sources are not kept alive by the registry.
+
+The normal installation/build process uses the Python package index and executes
+package build backends. Use trusted dependency sources and keep TLS verification
+enabled. Report suspected vulnerabilities privately using the contact method
+above; do not include credentials or sensitive application data in public issues.

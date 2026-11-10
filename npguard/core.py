@@ -1,105 +1,56 @@
-"""
-npguard.py
+"""Exception-safe observation with execution-local state."""
 
-NumPy Memory Guard (v0.3)
-
-A NumPy memory observability and explanation tool.
-
-Features:
-1. Watch NumPy memory behavior
-2. Notify users about memory pressure & temporaries
-3. Suggest opt-in ways to reduce memory pressure
-
-This module does NOT modify NumPy internals.
-It only observes and explains memory behavior.
-"""
-
-"""
-Structure of npguard
-npguard.py
-│
-├─ State
-│   ├─ ArrayRegistry
-│   ├─ Alloc_Tracker
-│   └─ _last_observation
-│
-├─ Collection layer
-│   ├─ register_array()
-│   ├─ _cleanup_dead_arrays()
-│
-├─ Analysis layer (signals)
-│   ├─ _estimate_temporaries()
-│   ├─ _detect_repeated_allocations()
-│   ├─ _detect_broadcasting()
-│
-├─ Presentation layer
-│   ├─ memory_watcher()
-│   ├─ _emit_warning()
-│   └─ suggest()
-│
-└─ Reporting
-    └─ report()
-
-"""
-import tracemalloc
-import time
 from contextlib import contextmanager
+import math
+from numbers import Real
 
-from .registry import ArrayRegistry, AllocationTimeline, reset_registry
-from .signals.threading import detect_parallel_spikes
-from .signals.dtype import detect_dtype_promotion
-from .signals.repetition import detect_repeated_allocations
-from .signals.temporaries import detect_temporaries
+from . import state
+from .registry import reset_registry
+from .session import ObservationSession
 
-_last = {}
 
 @contextmanager
 def memory_watcher(tag="block", silent=False, warn_threshold_mb=10):
-    tracemalloc.start()
-    start_mem, _ = tracemalloc.get_traced_memory()
-    start_time = time.perf_counter()
+    """Observe a block and yield a handle for explicit worker registration.
 
-    yield
-
-    _, peak = tracemalloc.get_traced_memory()
-    end_time = time.perf_counter()
-    tracemalloc.stop()
-
-    peak_mb = (peak - start_mem) / 1024 / 1024
-
-    temporaries = detect_temporaries(
-        AllocationTimeline,
-        start_time,
-        end_time
-    )
-
-    temp_mb = sum(t["size"] for t in temporaries) / 1024 / 1024
-
-    signals = {
-        "parallel": detect_parallel_spikes(AllocationTimeline),
-        "dtype_promotions": detect_dtype_promotion(ArrayRegistry),
-        "repeated": detect_repeated_allocations(ArrayRegistry),
-        "temporaries": {
-            "count": len(temporaries),
-            "mb": temp_mb,
-        }
-    }
-
-    _last.clear()
-    _last.update({
-        "tag": tag,
-        "peak_mb": peak_mb,
-        "signals": signals,
-    })
-
-    if not silent and peak_mb > warn_threshold_mb:
-        print("[npguard] Memory spike detected")
+    Traced memory is process-wide, not isolated NumPy usage. Registrations belong
+    only to the innermost session by default.
+    """
+    if not isinstance(tag, str):
+        raise TypeError("tag must be a string")
+    if (
+        not isinstance(warn_threshold_mb, Real)
+        or not math.isfinite(warn_threshold_mb)
+        or warn_threshold_mb < 0
+    ):
+        raise ValueError("warn_threshold_mb must be a finite non-negative number")
+    session = ObservationSession(tag)
+    token = state.activate(session)
+    exception_type = None
+    try:
+        yield session
+    except BaseException as error:
+        exception_type = type(error).__name__
+        raise
+    finally:
+        try:
+            session.finish(exception_type)
+            observation = session.observation
+            state.save_observation(observation)
+        finally:
+            state.restore(token)
+        peak = observation["peak_mb"]
+        if not silent and exception_type is None and peak is not None and peak > warn_threshold_mb:
+            print("[npguard] Process-wide traced memory exceeded the warning threshold")
 
 
 def last_observation():
-    return dict(_last)
+    return state.last_observation()
 
 
 def reset():
-    _last.clear()
+    """Clear this context's last observation and standalone registrations."""
+    if state.sessions():
+        raise RuntimeError("Cannot reset during an active monitoring session")
+    state.clear_observation()
     reset_registry()

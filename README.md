@@ -1,314 +1,146 @@
 # npguard
 
-**npguard** is a NumPy memory observability and explanation tool.
-
-It helps developers understand **why** NumPy memory usage spikes by detecting
-temporary allocations and explaining their causes, with safe, opt-in suggestions
-to reduce memory pressure.
-
-npguard focuses on **explanation**, not automatic optimization.
-
----
+NPGuard helps explain NumPy memory use through process-traced measurements and
+optional array metadata. It observes, analyzes, and suggests; it never rewrites
+code, monkey-patches NumPy, or changes array behavior. Application data stays
+local. This checkout is **v0.4.0.dev0**, a reliability development version, not a
+published stable release or a claim of production readiness.
 
 ## Installation
 
+Python **3.10+**, NumPy **1.23.5–2.x** (subject to each NumPy release's Python
+support). From this checkout:
+
 ```bash
-pip install npguard
-````
-
-PyPI: [https://pypi.org/project/npguard/](https://pypi.org/project/npguard/)
-
----
-
-## Motivation
-
-NumPy can silently allocate large temporary arrays during:
-
-* chained expressions
-* broadcasting
-* repeated allocations inside loops
-* parallel execution
-
-For example:
-
-```python
-b = a * 2 + a.mean(axis=0) - 1
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m pip install -e '.[dev]'
 ```
 
-This single line can create multiple full-sized temporary arrays, leading to
-sudden memory spikes that are not obvious from the code and are often poorly
-explained by traditional profilers.
+`pip install npguard` installs the version available on PyPI, which may differ
+from this development checkout. See the [compatibility matrix](docs/development.md).
 
-**npguard exists to answer one question:**
-
-> *“Why did memory spike here?”*
-
----
-
-## Features
-
-* Watch NumPy-heavy code blocks
-* Detect memory pressure and hidden temporary allocations
-* Estimate temporary memory usage and array counts
-* Detect repeated allocations
-* Detect parallel/threaded allocation spikes
-* Detect dtype promotion signals
-* Explain causes in human-readable terms
-* Provide safe, opt-in optimization suggestions
-
-### Multiple ergonomics
-
-* Context manager
-* Decorator API
-* Silent capture API
-* Programmatic signal access
-
----
-
-## What npguard does NOT do
-
-* Does **not** modify NumPy behavior
-* Does **not** monkey-patch NumPy
-* Does **not** automatically reuse buffers
-* Does **not** rewrite user code
-* Does **not** detect memory leaks
-* Is **not** a production monitoring tool
-
-npguard is intended for **development and debugging**, not runtime enforcement.
-
----
-
-## Example Usage
-
-### 1. Basic block observation
+## Observe a NumPy workload
 
 ```python
 import numpy as np
 import npguard as ng
 
-with ng.memory_watcher("basic_block"):
-    a = np.random.rand(10_000, 100)
-    ng.register_array(a, "a")
+with ng.capture("step") as observation:
+    source = np.ones(100_000, dtype=np.float32)
+    result = source.astype(np.float64)
+    ng.register_array(source, "source")
+    ng.register_array(result, "result", source=source)
 
-    b = a * 2 + a.mean(axis=0) - 1
-    ng.register_array(b, "b")
-
-    c = np.ascontiguousarray(b.T)
-    ng.register_array(c, "c")
-
+print(observation["measurements"]["registered_arrays"]["logical_bytes"])
+print(observation["signals"]["dtype_promotions"])
 ng.report()
 ng.suggest()
 ```
 
-**Output:**
+`source=` is optional and asserts a relationship supplied by the caller. Dtype
+findings include the two dtypes, shape/size evidence, storage-overlap bounds, and
+safe-cast information. They do not prove an implicit NumPy promotion or an
+unnecessary copy. High confidence applies to the dtype difference, not its cause.
 
-```
-[npguard] Memory spike detected
+## What the numbers mean
 
-[npguard] Allocation Summary (cumulative)
-  a           : 7.63 MB
-  b           : 7.63 MB
-  c           : 7.63 MB
-[INFO][npguard] Memory analysis completed (peak ~23.77 MB)
-[WARN][signals.repetition] Repeated allocations detected at 1 site(s)
-[INFO][suggestion] Reuse preallocated buffers inside loops
-```
+| Category | v0.4 behavior |
+| --- | --- |
+| Python-traced memory | Process-wide tracemalloc bytes; includes Python objects, supported NumPy buffers, other threads, and instrumentation |
+| NumPy data-buffer allocations | Not measured separately; NumPy-domain snapshots are planned for v0.5 |
+| Process memory / RSS | Not measured |
+| Registered array sizes | Logical `nbytes`; views/shared buffers can be counted more than once |
+| Temporary/intermediate allocations | Unknown; registration does not establish allocation time or buffer lifetime |
+| Object lifecycle | Weak references observe whether a registered array object was released during observation; this does not prove its buffer was freed |
 
----
+`peak_mb` is a compatibility alias for the process-wide traced peak increase
+above the session's starting current traced bytes, in **MiB**. It is available
+only when NPGuard owns an exclusive, uninterrupted tracing interval. It is
+`None` for nested/overlapping sessions or an already-running external tracer.
+The process's raw peak remains available under
+`measurements.python_traced.process_peak_bytes`, with its scope and attribution
+reason. No individual session peak is invented from a shared high-water mark.
 
-## 2. Silent Capture API
-
-```python
-with ng.capture("captured_block") as obs:
-    x = np.random.rand(10_000, 100)
-    ng.register_array(x, "x")
-
-    y = x * 3
-    ng.register_array(y, "y")
-
-print(obs)
-```
-
-**Output (excerpt):**
-
-```
-{
-  'tag': 'captured_block',
-  'peak_mb': 15.26,
-  'signals': {
-    'parallel': None,
-    'dtype_promotions': [],
-    'repeated': {...},
-    'temporaries': {'count': 2, 'mb': 15.26}
-  }
-}
-```
-
----
-
-## 3. Decorator API
+## Public APIs
 
 ```python
-@ng.watch("decorated_function", warn_threshold_mb=5)
-def compute_step():
-    a = np.random.rand(10_000, 100)
-    ng.register_array(a, "a")
-    return a * 2 + a.mean(axis=0)
+with ng.memory_watcher("block", warn_threshold_mb=10) as session:
+    array = np.ones(100)
+    ng.register_array(array, "array")
 
-compute_step()
-ng.suggest()
-```
+@ng.watch("function", silent=True)
+def compute():
+    return np.ones(100)
 
-**Output:**
-
-```
-[npguard] Memory spike detected
-[INFO][npguard] Memory analysis completed (peak ~15.26 MB)
-[WARN][signals.repetition] Repeated allocations detected at 1 site(s)
-[INFO][suggestion] Reuse preallocated buffers inside loops
-```
-
----
-
-## 4. profile() Helper
-
-```python
-def pipeline():
-    a = np.random.rand(10_000, 100)
-    ng.register_array(a, "a")
-    return np.ascontiguousarray(a.T)
-
-ng.profile(pipeline)
-ng.suggest()
-```
-
----
-
-## 5. NEW in v0.3 — Structured Signal Access
-
-```python
-print("Peak MB:", ng.last("peak_mb"))
-print("Repeated allocations:", bool(ng.last("signals.repeated")))
-print("Dtype promotions:", bool(ng.last("signals.dtype_promotions")))
-print("Parallel allocations:", bool(ng.last("signals.parallel")))
-```
-
-**Output:**
-
-```
-Peak MB: 15.26
-Repeated allocations: True
-Dtype promotions: False
-Parallel allocations: False
-```
-
----
-
-## 6. NEW in v0.3 — Parallel Allocation Detection
-
-```python
-import threading
-
-def threaded_alloc():
-    a = np.random.rand(5_000, 100)
-    ng.register_array(a, "threaded")
-
-with ng.memory_watcher("thread_test"):
-    t1 = threading.Thread(target=threaded_alloc)
-    t2 = threading.Thread(target=threaded_alloc)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-
-ng.suggest()
-```
-
-**Output:**
-
-```
-[WARN][signals.parallel] Parallel temporary allocations detected across threads
-[INFO][suggestion] Consider thread-local buffers or avoiding shared temporaries
-```
-
----
-
-## 7. Reset State (v0.3 fix)
-
-```python
-print("Before reset:", ng.last())
+result = ng.profile(compute)
+print(ng.last("signals.temporaries.status"))
 ng.reset()
-print("After reset:", ng.last())
 ```
 
-**Output:**
+- `memory_watcher(tag="block", silent=False, warn_threshold_mb=10)` yields a
+  session handle. Warnings describe process-traced memory, not proven NumPy
+  temporary pressure. Async functions can use `@watch` or await `profile(fn)`.
+- `capture(tag="block", **kwargs)` yields a dict filled on exit, including on
+  application exceptions. Capture is always silent and propagates exceptions.
+- `register_array(arr, label="array", *, source=None, session=None)` returns
+  `arr` unchanged. Metadata only; no strong array references. The first
+  registration of a live object in a session wins. Register a derived array
+  separately. Registration timestamps are not allocation timestamps.
+- `last_observation()` and `last(path=None)` return defensive snapshots in the
+  current execution context. Unknown dotted paths return `None`.
+- `report()` prints active/last-session logical sizes; with no completed session,
+  it prints standalone registrations. `suggest(temp_threshold_mb=5)` prints
+  conditional evidence-based advice; its legacy threshold controls the traced
+  memory summary, not proof of temporary allocations.
+- `reset()` clears this context's last result and standalone metadata; it is
+  rejected while a session is active. `log` exposes debug/info/warn/error output.
 
-```
-Before reset: {...}
-After reset: {}
-```
+See [API and measurement contracts](docs/measurement-and-api.md) for nesting,
+threads, tasks, exceptions, generator limitations, and tracing ownership.
 
----
+## Threads and nesting
 
-
-## 8. Logging
-
-npguard exposes a lightweight logger for structured diagnostic output:
+New threads and new asyncio tasks have independent sessions/results. To register
+worker arrays in an existing session, share its handle explicitly:
 
 ```python
-ng.log.info("tag", "message")
-ng.log.warn("tag", "message")
-ng.log.debug("tag", "message")
+from concurrent.futures import ThreadPoolExecutor
+
+with ng.memory_watcher("workers", silent=True) as session:
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        arrays = list(pool.map(
+            lambda _: ng.register_array(np.ones(100), session=session), range(2)
+        ))
 ```
 
----
+Join workers before closing the session. Thread diversity alone does not prove
+simultaneous allocation. Nested sessions collect their own registrations;
+parents' process measurements necessarily include nested work. No NumPy memory
+is automatically attributed to a line of user code in v0.4.
 
-## When to Use npguard
+## Development and roadmap
 
-* Debugging unexpected NumPy memory spikes
-* Understanding temporary array creation
-* Learning memory-aware NumPy patterns
-* Investigating OOMs during pipeline scaling
-* Second-pass performance and memory analysis
+```bash
+python -m pytest --cov=npguard --cov-report=term-missing
+python -m flake8 npguard tests benchmarks --select=E9,F63,F7,F82
+python main.py
+python benchmarks/run.py --size 20000 --repeats 5 --output /tmp/npguard-benchmarks.json
+python -m build
+```
 
----
+- [v0.3.1 audit and architecture decisions](docs/audit-v0.3.1.md)
+- [Milestones and acceptance criteria through v1.0](docs/roadmap.md)
+- [Migration from v0.3](docs/migration-v0.4.md)
+- [Development guide and compatibility matrix](docs/development.md)
+- [Benchmark methodology](benchmarks/README.md)
+- [Contributing](CONTRIBUTING.md), [changelog](CHANGELOG.md), [security](SECURITY.md)
 
-## Target Audience
+Automatic allocation tracking, AST-backed diagnostics, a profiling CLI,
+JSON/HTML profiling reports, optimization benchmarking, regression budgets, and
+native-profiler integrations are later-phase work. The internal AST helper is a
+syntactic hint only: it cannot establish that a binary expression uses NumPy.
+NPGuard does not identify all native/short-lived allocations or memory leaks.
 
-* NumPy users working with medium to large arrays
-* Developers debugging memory pressure (not leaks)
-* Engineers who want **explanations rather than auto-fixes**
-
----
-
-## Project Status
-
-* **Version:** 0.3.0
-* **Status:** early but stable
-* **API:** conservative and explanation-first
-
-Future versions may improve signal accuracy and aggregation,
-while preserving the non-invasive philosophy.
-
----
-
-## License
-
-MIT License
-
----
-
-## Support & Sustainability
-
-**Npguard is developed and maintained as an open project.**
-
-If you find it useful and want to support its continued development, documentation, and experimentation, you can do so via Patreon.
-
-- Supporters may occasionally receive:
-- Early previews of new features or syntax
-- Development notes and design decisions
-- Sneak peeks into upcoming tools or related projects
-
-There are no fixed schedules or obligations. Support is primarily about enabling the work itself.
-
-Patreon: https://patreon.com/PriyanshuRauth
+MIT licensed. Contributions to detectors, testing, documentation, and benchmarks
+are welcome. Optional project support: https://patreon.com/PriyanshuRauth.
